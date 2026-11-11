@@ -27,7 +27,7 @@ type SettingsTab = 'collab' | 'ai' | 'canvas';
           <div class="h-14 px-6 border-b border-[#2d2d35] flex items-center justify-between bg-[#19191d]">
             <div class="flex items-center gap-2.5">
               <span class="text-lg">⚙️</span>
-              <h2 class="text-sm font-bold text-white tracking-wide">Ajustes de Grovy Figma</h2>
+              <h2 class="text-sm font-bold text-white tracking-wide">Ajustes de Grovy Studio</h2>
             </div>
             <button
               type="button"

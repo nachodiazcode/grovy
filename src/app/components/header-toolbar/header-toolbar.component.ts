@@ -41,9 +41,9 @@ import { AIPromptDialogComponent } from '../ai-prompt-dialog/ai-prompt-dialog.co
           <div class="flex flex-col">
             <div class="flex items-center gap-1.5">
               <span class="text-xs font-bold text-white tracking-wide group-hover:text-blue-400 transition">
-                Grovy Figma
+                Grovy Studio
               </span>
-              <span class="text-[9px] px-1 py-0.2 rounded bg-blue-500/20 text-blue-400 font-mono">v22</span>
+              <span class="text-[9px] px-1 py-0.2 rounded bg-blue-500/20 text-blue-400 font-mono">Pro</span>
               <app-figma-icon name="chevron-down" [size]="10" />
             </div>
             <span class="text-[9px] text-gray-400">Diseño & Prototipado</span>
