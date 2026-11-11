@@ -3,15 +3,19 @@ import {
   Component,
   ElementRef,
   inject,
+  signal,
   viewChild,
 } from '@angular/core';
 import { CanvasStateService } from '../../services/canvas-state.service';
+import { CollaborationService } from '../../services/collaboration.service';
 import { ToolType } from '../../models/figma.models';
 import { FigmaIconComponent } from '../icons/figma-icons.component';
+import { SettingsModalComponent } from '../settings-modal/settings-modal.component';
+import { AIPromptDialogComponent } from '../ai-prompt-dialog/ai-prompt-dialog.component';
 
 @Component({
   selector: 'app-header-toolbar',
-  imports: [FigmaIconComponent],
+  imports: [FigmaIconComponent, SettingsModalComponent, AIPromptDialogComponent],
   styles: `
     :host {
       display: block;
@@ -21,19 +25,94 @@ import { FigmaIconComponent } from '../icons/figma-icons.component';
   `,
   template: `
     <header class="h-12 bg-[#2c2c2c] border-b border-[#383838] px-3 flex items-center justify-between text-gray-200 select-none z-30 relative">
-      <!-- Left: Brand & File Title -->
-      <div class="flex items-center gap-3">
-        <!-- Figma-like Logo Icon -->
-        <div class="w-7 h-7 rounded-md bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-md">
-          <span class="text-white text-xs font-black tracking-tight">G</span>
-        </div>
-        <div class="flex flex-col">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-semibold text-white tracking-wide">Grovy Figma</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">v22</span>
+      <!-- Left: App Name Menu with Dropdown ("Ajustes" is inside this menu!) -->
+      <div class="flex items-center gap-2 relative">
+        <button
+          type="button"
+          (click)="toggleAppMenu()"
+          class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[#383838] transition group text-left"
+          title="Menú principal de Grovy"
+        >
+          <!-- Figma-like Logo Icon -->
+          <div class="w-6 h-6 rounded-md bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-md">
+            <span class="text-white text-xs font-black tracking-tight">G</span>
           </div>
-          <span class="text-[10px] text-gray-400">Diseño sin título</span>
-        </div>
+
+          <div class="flex flex-col">
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs font-bold text-white tracking-wide group-hover:text-blue-400 transition">
+                Grovy Figma
+              </span>
+              <span class="text-[9px] px-1 py-0.2 rounded bg-blue-500/20 text-blue-400 font-mono">v22</span>
+              <app-figma-icon name="chevron-down" [size]="10" />
+            </div>
+            <span class="text-[9px] text-gray-400">Diseño & Prototipado</span>
+          </div>
+        </button>
+
+        <!-- App Menu Dropdown with "Ajustes" -->
+        @if (isAppMenuOpen()) {
+          <div class="fixed inset-0 z-40" (click)="isAppMenuOpen.set(false)"></div>
+          <div class="absolute left-0 top-12 w-56 bg-[#252528] border border-[#3b3b44] rounded-xl shadow-2xl py-1.5 z-50 text-xs">
+            <!-- Settings button (Inside app name menu as requested!) -->
+            <button
+              type="button"
+              (click)="openSettings()"
+              class="w-full text-left px-3 py-2 hover:bg-[#0d99ff] hover:text-white text-gray-200 flex items-center gap-2 transition"
+            >
+              <span>⚙️</span>
+              <span class="font-semibold">Ajustes / Configuración</span>
+            </button>
+
+            <div class="h-[1px] bg-[#38383e] my-1"></div>
+
+            <button
+              type="button"
+              (click)="openAI()"
+              class="w-full text-left px-3 py-2 hover:bg-[#0d99ff] hover:text-white text-gray-200 flex items-center gap-2 transition"
+            >
+              <span>✨</span>
+              <span>Generar con IA (Prompt)</span>
+            </button>
+
+            <button
+              type="button"
+              (click)="state.startPrototype()"
+              class="w-full text-left px-3 py-2 hover:bg-[#0d99ff] hover:text-white text-gray-200 flex items-center gap-2 transition"
+            >
+              <span>▶</span>
+              <span>Presentación de Prototipo</span>
+            </button>
+
+            <div class="h-[1px] bg-[#38383e] my-1"></div>
+
+            <!-- Export options -->
+            <button
+              type="button"
+              (click)="exportSvg()"
+              class="w-full text-left px-3 py-1.5 hover:bg-[#0d99ff] hover:text-white text-gray-300 flex items-center justify-between transition"
+            >
+              <span>Exportar como SVG</span>
+              <span class="text-[10px] opacity-70">Vector</span>
+            </button>
+            <button
+              type="button"
+              (click)="exportPng()"
+              class="w-full text-left px-3 py-1.5 hover:bg-[#0d99ff] hover:text-white text-gray-300 flex items-center justify-between transition"
+            >
+              <span>Exportar como PNG</span>
+              <span class="text-[10px] opacity-70">Retina 2x</span>
+            </button>
+            <button
+              type="button"
+              (click)="exportJson()"
+              class="w-full text-left px-3 py-1.5 hover:bg-[#0d99ff] hover:text-white text-gray-300 flex items-center justify-between transition"
+            >
+              <span>Guardar Proyecto JSON</span>
+              <span class="text-[10px] opacity-70">.json</span>
+            </button>
+          </div>
+        }
 
         <div class="h-5 w-[1px] bg-[#3f3f46] mx-1"></div>
 
@@ -73,7 +152,6 @@ import { FigmaIconComponent } from '../icons/figma-icons.component';
             [title]="tool.label + ' (' + tool.shortcut + ')'"
           >
             <app-figma-icon [name]="tool.icon" [size]="15" />
-            <!-- Shortcut tooltip -->
             <span class="absolute -bottom-7 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition pointer-events-none bg-black/90 text-[10px] text-gray-200 px-1.5 py-0.5 rounded border border-[#444] whitespace-nowrap z-50">
               {{ tool.label }} ({{ tool.shortcut }})
             </span>
@@ -81,9 +159,8 @@ import { FigmaIconComponent } from '../icons/figma-icons.component';
         }
       </div>
 
-      <!-- Right: Zoom, Export, Import & Share -->
+      <!-- Right: AI Button, Collaborators, Play Prototype & Export -->
       <div class="flex items-center gap-2">
-        <!-- Hidden file input for project import -->
         <input
           #fileInput
           type="file"
@@ -91,6 +168,45 @@ import { FigmaIconComponent } from '../icons/figma-icons.component';
           (change)="onFileSelected($event)"
           class="hidden"
         />
+
+        <!-- AI Prompt Button -->
+        <button
+          type="button"
+          (click)="openAI()"
+          class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white shadow-sm transition"
+          title="Generar componentes o prototipos con IA"
+        >
+          <span>✨</span>
+          <span>IA Prompt</span>
+        </button>
+
+        <!-- Prototype Play Button (Ver preview de lujo) -->
+        <button
+          type="button"
+          (click)="state.startPrototype()"
+          class="flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg bg-[#272730] hover:bg-[#0d99ff] text-white border border-[#3f3f4c] shadow-sm transition group"
+          title="Ver preview de lujo del prototipo interactivo (Play)"
+        >
+          <span class="text-emerald-400 group-hover:text-white">▶</span>
+          <span>Presentar</span>
+        </button>
+
+        <!-- Collaborators Avatars (Multiplayer Presence) -->
+        <div class="flex items-center -space-x-1.5 px-1">
+          @for (c of collab.activeCollaborators(); track c.id) {
+            <div
+              class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-md border-2 border-[#2c2c2c] cursor-pointer hover:scale-125 transition relative group"
+              [style.background-color]="c.color"
+              [title]="c.name"
+            >
+              <span>{{ c.name.substring(0, 1).toUpperCase() }}</span>
+              <!-- Tooltip -->
+              <span class="absolute -bottom-7 right-0 opacity-0 group-hover:opacity-100 transition pointer-events-none bg-black/90 text-[10px] text-gray-200 px-1.5 py-0.5 rounded border border-[#444] whitespace-nowrap z-50">
+                {{ c.name }}
+              </span>
+            </div>
+          }
+        </div>
 
         <!-- Zoom Controls -->
         <div class="flex items-center bg-[#222222] rounded-md border border-[#383838] px-1 text-xs">
@@ -120,17 +236,6 @@ import { FigmaIconComponent } from '../icons/figma-icons.component';
           </button>
         </div>
 
-        <!-- Import Button -->
-        <button
-          type="button"
-          (click)="triggerImport()"
-          class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-[#333333] hover:bg-[#3f3f46] text-gray-200 transition border border-[#444]"
-          title="Importar proyecto JSON"
-        >
-          <app-figma-icon name="upload" [size]="13" />
-          <span>Importar</span>
-        </button>
-
         <!-- Export Dropdown -->
         <div class="relative">
           <button
@@ -144,9 +249,7 @@ import { FigmaIconComponent } from '../icons/figma-icons.component';
           </button>
 
           @if (isExportMenuOpen) {
-            <!-- Backdrop -->
             <div class="fixed inset-0 z-40" (click)="isExportMenuOpen = false"></div>
-            <!-- Menu -->
             <div class="absolute right-0 mt-1.5 w-44 bg-[#252525] border border-[#3f3f46] rounded-lg shadow-2xl py-1 z-50 text-xs">
               <button
                 type="button"
@@ -177,16 +280,32 @@ import { FigmaIconComponent } from '../icons/figma-icons.component';
           }
         </div>
       </div>
+
+      <!-- Settings Modal Component (opened from App menu) -->
+      <app-settings-modal
+        [isOpen]="isSettingsOpen()"
+        (close)="isSettingsOpen.set(false)"
+      />
+
+      <!-- AI Prompt Dialog Component -->
+      <app-ai-prompt-dialog
+        [isOpen]="isAIOpen()"
+        (close)="isAIOpen.set(false)"
+      />
     </header>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class HeaderToolbarComponent {
   readonly state = inject(CanvasStateService);
+  readonly collab = inject(CollaborationService);
   protected readonly Math = Math;
 
   readonly fileInputRef = viewChild<ElementRef<HTMLInputElement>>('fileInput');
 
+  readonly isAppMenuOpen = signal<boolean>(false);
+  readonly isSettingsOpen = signal<boolean>(false);
+  readonly isAIOpen = signal<boolean>(false);
   isExportMenuOpen = false;
 
   readonly tools: { id: ToolType; label: string; shortcut: string; icon: string }[] = [
@@ -199,6 +318,20 @@ export class HeaderToolbarComponent {
     { id: 'line', label: 'Línea', shortcut: 'L', icon: 'line' },
     { id: 'text', label: 'Texto', shortcut: 'T', icon: 'text' },
   ];
+
+  toggleAppMenu() {
+    this.isAppMenuOpen.update((v) => !v);
+  }
+
+  openSettings() {
+    this.isAppMenuOpen.set(false);
+    this.isSettingsOpen.set(true);
+  }
+
+  openAI() {
+    this.isAppMenuOpen.set(false);
+    this.isAIOpen.set(true);
+  }
 
   selectTool(tool: ToolType) {
     this.state.setTool(tool);
@@ -238,6 +371,7 @@ export class HeaderToolbarComponent {
 
   exportJson() {
     this.isExportMenuOpen = false;
+    this.isAppMenuOpen.set(false);
     const json = this.state.exportToJson();
     const blob = new Blob([json], { type: 'application/json' });
     this.downloadBlob(blob, 'grovy-design.json');
@@ -245,12 +379,11 @@ export class HeaderToolbarComponent {
 
   exportSvg() {
     this.isExportMenuOpen = false;
+    this.isAppMenuOpen.set(false);
     const svgEl = document.getElementById('figma-canvas-svg') as SVGGraphicsElement | null;
     if (!svgEl) return;
 
-    // Clone svg content and wrap in standalone svg
     const svgClone = svgEl.cloneNode(true) as SVGElement;
-    // Remove UI helpers/overlays from export
     const overlays = svgClone.querySelector('#selection-overlay-group');
     if (overlays) overlays.remove();
     const grid = svgClone.querySelector('#canvas-grid-pattern');
@@ -263,6 +396,7 @@ export class HeaderToolbarComponent {
 
   exportPng() {
     this.isExportMenuOpen = false;
+    this.isAppMenuOpen.set(false);
     const svgEl = document.getElementById('figma-canvas-svg') as SVGGraphicsElement | null;
     if (!svgEl) return;
 
@@ -280,7 +414,7 @@ export class HeaderToolbarComponent {
       const canvas = document.createElement('canvas');
       const width = svgEl.clientWidth || 1200;
       const height = svgEl.clientHeight || 800;
-      canvas.width = width * 2; // 2x Retina
+      canvas.width = width * 2;
       canvas.height = height * 2;
       const ctx = canvas.getContext('2d');
       if (ctx) {

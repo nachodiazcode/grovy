@@ -1,5 +1,15 @@
-import { Injectable, computed, signal } from '@angular/core';
-import { BoundingBox, FigmaElement, Point, ShapeType, ToolType } from '../models/figma.models';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import {
+  BoundingBox,
+  ComponentPreset,
+  EditorMode,
+  FigmaElement,
+  Point,
+  PrototypeInteraction,
+  ShapeType,
+  ToolType,
+} from '../models/figma.models';
+import { CollaborationService } from './collaboration.service';
 
 const INITIAL_ELEMENTS: FigmaElement[] = [
   {
@@ -23,6 +33,7 @@ const INITIAL_ELEMENTS: FigmaElement[] = [
     shadowOffsetY: 8,
     locked: false,
     visible: true,
+    isInitialFrame: true,
   },
   {
     id: 'badge-1',
@@ -148,6 +159,12 @@ const INITIAL_ELEMENTS: FigmaElement[] = [
     shadowOffsetY: 4,
     locked: false,
     visible: true,
+    interaction: {
+      trigger: 'click',
+      action: 'navigate',
+      targetFrameId: 'frame-detail-preview',
+      animation: 'slide-left',
+    },
   },
   {
     id: 'btn-text',
@@ -220,20 +237,153 @@ const INITIAL_ELEMENTS: FigmaElement[] = [
     locked: false,
     visible: true,
   },
+  // Frame 2: Linked Prototype Target Frame
+  {
+    id: 'frame-detail-preview',
+    name: 'Frame - Vista Detalle (Target)',
+    type: 'frame',
+    x: 780,
+    y: 80,
+    width: 420,
+    height: 420,
+    rotation: 0,
+    fill: '#0f172a',
+    fillOpacity: 1,
+    stroke: '#1e293b',
+    strokeWidth: 1,
+    cornerRadius: 16,
+    opacity: 1,
+    shadowBlur: 24,
+    shadowColor: '#00000066',
+    shadowOffsetX: 0,
+    shadowOffsetY: 8,
+    locked: false,
+    visible: true,
+  },
+  {
+    id: 'frame-detail-title',
+    name: 'Detail Title',
+    type: 'text',
+    x: 810,
+    y: 140,
+    width: 360,
+    height: 36,
+    rotation: 0,
+    fill: '#38bdf8',
+    fillOpacity: 1,
+    stroke: 'transparent',
+    strokeWidth: 0,
+    cornerRadius: 0,
+    opacity: 1,
+    shadowBlur: 0,
+    shadowColor: '#00000000',
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
+    locked: false,
+    visible: true,
+    content: '¡Prototipo en Acción! 🚀',
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  {
+    id: 'frame-detail-desc',
+    name: 'Detail Subtitle',
+    type: 'text',
+    x: 810,
+    y: 185,
+    width: 360,
+    height: 40,
+    rotation: 0,
+    fill: '#94a3b8',
+    fillOpacity: 1,
+    stroke: 'transparent',
+    strokeWidth: 0,
+    cornerRadius: 0,
+    opacity: 1,
+    shadowBlur: 0,
+    shadowColor: '#00000000',
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
+    locked: false,
+    visible: true,
+    content: 'Hiciste clic en el botón y navegaste a este frame con una transición fluida.',
+    fontSize: 13,
+    fontWeight: '400',
+  },
+  {
+    id: 'btn-back-home',
+    name: 'Botón: Volver a Hero',
+    type: 'rect',
+    x: 810,
+    y: 260,
+    width: 170,
+    height: 42,
+    rotation: 0,
+    fill: '#1e293b',
+    fillOpacity: 1,
+    stroke: '#334155',
+    strokeWidth: 1,
+    cornerRadius: 8,
+    opacity: 1,
+    shadowBlur: 10,
+    shadowColor: '#00000033',
+    shadowOffsetX: 0,
+    shadowOffsetY: 2,
+    locked: false,
+    visible: true,
+    interaction: {
+      trigger: 'click',
+      action: 'navigate',
+      targetFrameId: 'frame-1',
+      animation: 'slide-right',
+    },
+  },
+  {
+    id: 'btn-back-home-text',
+    name: 'Back Label',
+    type: 'text',
+    x: 840,
+    y: 286,
+    width: 120,
+    height: 20,
+    rotation: 0,
+    fill: '#ffffff',
+    fillOpacity: 1,
+    stroke: 'transparent',
+    strokeWidth: 0,
+    cornerRadius: 0,
+    opacity: 1,
+    shadowBlur: 0,
+    shadowColor: '#00000000',
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
+    locked: false,
+    visible: true,
+    content: '⬅ Volver al inicio',
+    fontSize: 12,
+    fontWeight: '600',
+  },
 ];
 
 @Injectable({
   providedIn: 'root',
 })
 export class CanvasStateService {
+  private readonly collab = inject(CollaborationService);
+
   // Elements state
   readonly elements = signal<FigmaElement[]>(INITIAL_ELEMENTS);
 
   // Selection state
   readonly selectedIds = signal<string[]>(['frame-1']);
 
-  // Active Tool
+  // Active Tool & Mode
   readonly activeTool = signal<ToolType>('select');
+  readonly editorMode = signal<EditorMode>('design'); // 'design' | 'prototype'
+
+  // Prototype Presentation Player state
+  readonly isPrototypePlaying = signal<boolean>(false);
+  readonly currentPrototypeFrameId = signal<string | null>(null);
 
   // Canvas Viewport Transformation
   readonly zoom = signal<number>(1);
@@ -252,6 +402,14 @@ export class CanvasStateService {
   readonly primarySelectedElement = computed(() => {
     const list = this.selectedElements();
     return list.length > 0 ? list[0] : null;
+  });
+
+  readonly allFrames = computed(() => {
+    return this.elements().filter((el) => el.type === 'frame');
+  });
+
+  readonly elementsWithInteractions = computed(() => {
+    return this.elements().filter((el) => el.interaction && el.interaction.targetFrameId);
   });
 
   readonly canUndo = computed(() => this.historyIndex() > 0);
@@ -283,6 +441,17 @@ export class CanvasStateService {
     };
   });
 
+  constructor() {
+    // Listen for elements broadcasted by remote peers
+    this.collab.onElementsReceived = (newElements) => {
+      this.elements.set(newElements);
+    };
+  }
+
+  setEditorMode(mode: EditorMode) {
+    this.editorMode.set(mode);
+  }
+
   // History management
   recordSnapshot() {
     const current = JSON.parse(JSON.stringify(this.elements()));
@@ -290,13 +459,15 @@ export class CanvasStateService {
     const newHistory = this.history().slice(0, currentIndex + 1);
     newHistory.push(current);
 
-    // Limit history stack to 50 steps
     if (newHistory.length > 50) {
       newHistory.shift();
     }
 
     this.history.set(newHistory);
     this.historyIndex.set(newHistory.length - 1);
+
+    // Broadcast change to peers
+    this.collab.broadcastElements(this.elements());
   }
 
   undo() {
@@ -304,6 +475,7 @@ export class CanvasStateService {
     const newIndex = this.historyIndex() - 1;
     this.historyIndex.set(newIndex);
     this.elements.set(JSON.parse(JSON.stringify(this.history()[newIndex])));
+    this.collab.broadcastElements(this.elements());
   }
 
   redo() {
@@ -311,6 +483,7 @@ export class CanvasStateService {
     const newIndex = this.historyIndex() + 1;
     this.historyIndex.set(newIndex);
     this.elements.set(JSON.parse(JSON.stringify(this.history()[newIndex])));
+    this.collab.broadcastElements(this.elements());
   }
 
   // Tool Selection
@@ -334,21 +507,31 @@ export class CanvasStateService {
       this.selectedIds.set([id]);
     }
     this.activeTool.set('select');
+    this.collab.broadcastSelection(this.selectedIds());
   }
 
   selectAll() {
     this.selectedIds.set(this.elements().map((el) => el.id));
     this.activeTool.set('select');
+    this.collab.broadcastSelection(this.selectedIds());
   }
 
   clearSelection() {
     this.selectedIds.set([]);
+    this.collab.broadcastSelection([]);
   }
 
   // Element CRUD
   addElement(element: FigmaElement) {
     this.elements.update((prev) => [...prev, element]);
     this.selectedIds.set([element.id]);
+    this.setTool('select');
+    this.recordSnapshot();
+  }
+
+  addMultipleElements(newElements: FigmaElement[]) {
+    this.elements.update((prev) => [...prev, ...newElements]);
+    this.selectedIds.set(newElements.map((el) => el.id));
     this.setTool('select');
     this.recordSnapshot();
   }
@@ -372,6 +555,10 @@ export class CanvasStateService {
     if (recordHistory) {
       this.recordSnapshot();
     }
+  }
+
+  setElementInteraction(id: string, interaction?: PrototypeInteraction) {
+    this.updateElement(id, { interaction }, true);
   }
 
   deleteSelected() {
@@ -513,6 +700,41 @@ export class CanvasStateService {
     this.updateMultiple(updates);
   }
 
+  // Insert Design System Component
+  insertComponentPreset(preset: ComponentPreset) {
+    // Insert at center of view
+    const originX = Math.round(-this.pan().x / this.zoom() + 200);
+    const originY = Math.round(-this.pan().y / this.zoom() + 150);
+
+    const newElements: FigmaElement[] = preset.elements.map((el) => ({
+      ...JSON.parse(JSON.stringify(el)),
+      id: `${el.type}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      x: originX + el.x,
+      y: originY + el.y,
+    }));
+
+    this.addMultipleElements(newElements);
+  }
+
+  // Prototype Player Controls
+  startPrototype(startingFrameId?: string) {
+    const target = startingFrameId || this.allFrames().find((f) => f.isInitialFrame)?.id || this.allFrames()[0]?.id;
+    if (target) {
+      this.currentPrototypeFrameId.set(target);
+      this.isPrototypePlaying.set(true);
+    } else {
+      alert('Crea al menos un Frame (Marco) para previsualizar el prototipo.');
+    }
+  }
+
+  stopPrototype() {
+    this.isPrototypePlaying.set(false);
+  }
+
+  navigatePrototypeTo(frameId: string) {
+    this.currentPrototypeFrameId.set(frameId);
+  }
+
   // Zoom & Pan
   setZoom(newZoom: number, originPoint?: Point) {
     const clampedZoom = Math.min(Math.max(newZoom, 0.1), 5.0);
@@ -520,7 +742,6 @@ export class CanvasStateService {
 
     if (originPoint) {
       const currentPan = this.pan();
-      // Zoom centered at originPoint
       const newPanX = originPoint.x - (originPoint.x - currentPan.x) * (clampedZoom / oldZoom);
       const newPanY = originPoint.y - (originPoint.y - currentPan.y) * (clampedZoom / oldZoom);
       this.pan.set({ x: newPanX, y: newPanY });
@@ -550,7 +771,7 @@ export class CanvasStateService {
   exportToJson(): string {
     return JSON.stringify(
       {
-        version: '1.0.0',
+        version: '2.0.0',
         generator: 'Grovy Figma Clone (Angular 22)',
         elements: this.elements(),
       },

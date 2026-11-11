@@ -9,6 +9,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { CanvasStateService } from '../../services/canvas-state.service';
+import { CollaborationService } from '../../services/collaboration.service';
 import {
   BoundingBox,
   FigmaElement,
@@ -205,6 +206,35 @@ interface DragState {
             }
           }
 
+          <!-- Prototype Connection Arrows (Noodles) -->
+          @for (item of state.elementsWithInteractions(); track item.id) {
+            @let target = getTargetFrame(item.interaction?.targetFrameId);
+            @if (target) {
+              @let startX = item.x + item.width;
+              @let startY = item.y + item.height / 2;
+              @let endX = target.x;
+              @let endY = target.y + target.height / 2;
+              @let cpX = (startX + endX) / 2;
+              <g class="pointer-events-none select-none opacity-80">
+                <!-- Glowing curved line -->
+                <path
+                  [attr.d]="'M ' + startX + ' ' + startY + ' C ' + cpX + ' ' + startY + ' ' + cpX + ' ' + endY + ' ' + endX + ' ' + endY"
+                  fill="none"
+                  stroke="#0d99ff"
+                  stroke-width="2.5"
+                  stroke-dasharray="6 3"
+                />
+                <!-- Source Node Dot -->
+                <circle [attr.cx]="startX" [attr.cy]="startY" r="4.5" fill="#0d99ff" stroke="#ffffff" stroke-width="1.5" />
+                <!-- Target Arrow -->
+                <polygon
+                  [attr.points]="endX + ',' + endY + ' ' + (endX - 8) + ',' + (endY - 5) + ' ' + (endX - 8) + ',' + (endY + 5)"
+                  fill="#0d99ff"
+                />
+              </g>
+            }
+          }
+
           <!-- Live Drawing Preview Shape -->
           @if (dragState()?.type === 'create' && dragState()?.createdShape; as shape) {
             <g opacity="0.8" class="pointer-events-none">
@@ -346,6 +376,42 @@ interface DragState {
               }
             </g>
           }
+
+          <!-- Live Collaborative Multi-Cursors (Multiplayer) -->
+          @for (peer of collab.otherCollaborators(); track peer.id) {
+            @if (peer.cursor; as c) {
+              <g [attr.transform]="'translate(' + c.x + ',' + c.y + ')'" class="pointer-events-none select-none z-40 transition-all duration-75">
+                <!-- SVG Cursor Arrow -->
+                <path
+                  d="M0,0 L0,15 L4,11 L8,18 L10,17 L6,10 L12,10 Z"
+                  [attr.fill]="peer.color"
+                  stroke="#ffffff"
+                  stroke-width="1"
+                />
+                <!-- Name Badge Pill -->
+                <g transform="translate(14, 14)">
+                  <rect
+                    x="0"
+                    y="0"
+                    [attr.width]="peer.name.length * 7 + 14"
+                    height="18"
+                    rx="4"
+                    [attr.fill]="peer.color"
+                  />
+                  <text
+                    x="7"
+                    y="13"
+                    fill="#ffffff"
+                    font-size="10"
+                    font-family="Inter, sans-serif"
+                    font-weight="600"
+                  >
+                    {{ peer.name }}
+                  </text>
+                </g>
+              </g>
+            }
+          }
         </g>
       </svg>
 
@@ -354,6 +420,10 @@ interface DragState {
         <span>X: <strong class="text-gray-200 font-mono">{{ Math.round(cursorCanvasPos().x) }}</strong></span>
         <span>Y: <strong class="text-gray-200 font-mono">{{ Math.round(cursorCanvasPos().y) }}</strong></span>
         <span>Zoom: <strong class="text-[#0d99ff] font-mono">{{ Math.round(state.zoom() * 100) }}%</strong></span>
+        <span class="text-emerald-400 flex items-center gap-1 font-mono">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          {{ collab.activeCollaborators().length }} online
+        </span>
       </div>
     </div>
   `,
@@ -361,18 +431,17 @@ interface DragState {
 })
 export class CanvasComponent {
   readonly state = inject(CanvasStateService);
+  readonly collab = inject(CollaborationService);
   protected readonly Math = Math;
 
   readonly canvasContainer = viewChild<ElementRef<HTMLDivElement>>('canvasContainer');
 
-  // Interactive Dragging / Resizing / Creating state
   readonly dragState = signal<DragState | null>(null);
   readonly cursorCanvasPos = signal<Point>({ x: 0, y: 0 });
 
   isSpacePressed = false;
 
   readonly gridSize = computed(() => {
-    // Dynamic dot grid spacing based on zoom
     const zoom = this.state.zoom();
     if (zoom < 0.3) return 100 * zoom;
     if (zoom > 2) return 10 * zoom;
@@ -404,6 +473,11 @@ export class CanvasComponent {
     const cx = el.x + el.width / 2;
     const cy = el.y + el.height / 2;
     return `rotate(${el.rotation} ${cx} ${cy})`;
+  }
+
+  getTargetFrame(targetFrameId?: string): FigmaElement | undefined {
+    if (!targetFrameId) return undefined;
+    return this.state.allFrames().find((f) => f.id === targetFrameId);
   }
 
   getHandlePosition(box: BoundingBox, handle: ResizeHandle): Point {
@@ -461,7 +535,6 @@ export class CanvasComponent {
   }
 
   onMouseDown(event: MouseEvent) {
-    // If Space is pressed, or Middle Click, or Hand Tool -> Pan
     if (this.isSpacePressed || event.button === 1 || this.state.activeTool() === 'hand') {
       this.dragState.set({
         type: 'pan',
@@ -472,7 +545,6 @@ export class CanvasComponent {
       return;
     }
 
-    // If drawing tool is active, start shape creation
     if (this.isDrawingTool()) {
       const canvasPt = this.screenToCanvas(event.clientX, event.clientY);
       const tool = this.state.activeTool() as ShapeType;
@@ -512,8 +584,12 @@ export class CanvasComponent {
       return;
     }
 
-    // Clicked empty canvas with select tool -> clear selection
-    if (event.target === this.canvasContainer()?.nativeElement || (event.target as HTMLElement).tagName === 'svg' || (event.target as HTMLElement).tagName === 'rect' && (event.target as HTMLElement).getAttribute('fill') === 'url(#canvas-grid-pattern)') {
+    if (
+      event.target === this.canvasContainer()?.nativeElement ||
+      (event.target as HTMLElement).tagName === 'svg' ||
+      ((event.target as HTMLElement).tagName === 'rect' &&
+        (event.target as HTMLElement).getAttribute('fill') === 'url(#canvas-grid-pattern)')
+    ) {
       this.state.clearSelection();
     }
   }
@@ -529,7 +605,6 @@ export class CanvasComponent {
       this.state.select(el.id, isMulti);
     }
 
-    // Prepare move drag state
     const initialMap = new Map<string, FigmaElement>();
     for (const item of this.state.selectedElements()) {
       initialMap.set(item.id, { ...item });
@@ -567,6 +642,9 @@ export class CanvasComponent {
     const canvasPt = this.screenToCanvas(event.clientX, event.clientY);
     this.cursorCanvasPos.set(canvasPt);
 
+    // Broadcast cursor position in real-time to peers
+    this.collab.broadcastCursor(canvasPt);
+
     const drag = this.dragState();
     if (!drag) return;
 
@@ -574,7 +652,6 @@ export class CanvasComponent {
     const dx = (event.clientX - drag.startX) / zoom;
     const dy = (event.clientY - drag.startY) / zoom;
 
-    // Pan
     if (drag.type === 'pan') {
       const screenDx = event.clientX - drag.startX;
       const screenDy = event.clientY - drag.startY;
@@ -587,7 +664,6 @@ export class CanvasComponent {
       return;
     }
 
-    // Move Selected Elements
     if (drag.type === 'move') {
       const updates = new Map<string, Partial<FigmaElement>>();
       drag.initialElements.forEach((initEl, id) => {
@@ -600,7 +676,6 @@ export class CanvasComponent {
       return;
     }
 
-    // Create New Shape
     if (drag.type === 'create' && drag.createdShape) {
       const originPt = this.screenToCanvas(drag.startX, drag.startY);
       const width = Math.max(Math.abs(canvasPt.x - originPt.x), 5);
@@ -621,7 +696,6 @@ export class CanvasComponent {
       return;
     }
 
-    // Resize Selection
     if (drag.type === 'resize' && drag.initialBox && drag.handle) {
       const initBox = drag.initialBox;
       let newMinX = initBox.minX;
@@ -656,7 +730,6 @@ export class CanvasComponent {
       return;
     }
 
-    // Rotate Selection
     if (drag.type === 'rotate' && drag.initialBox) {
       const centerX = drag.initialBox.minX + drag.initialBox.width / 2;
       const centerY = drag.initialBox.minY + drag.initialBox.height / 2;
@@ -665,7 +738,6 @@ export class CanvasComponent {
       let angleDeg = Math.round((angleRad * 180) / Math.PI + 90);
       if (angleDeg < 0) angleDeg += 360;
 
-      // Snap to 15 degrees if shift held
       if (event.shiftKey) {
         angleDeg = Math.round(angleDeg / 15) * 15;
       }
@@ -686,14 +758,13 @@ export class CanvasComponent {
 
     if (drag.type === 'create' && drag.createdShape) {
       const finalShape = drag.createdShape;
-      // If user simply clicked without dragging, assign a sensible default dimension
       if (finalShape.width < 10 && finalShape.height < 10) {
         if (finalShape.type === 'text') {
           finalShape.width = 160;
           finalShape.height = 30;
         } else if (finalShape.type === 'frame') {
           finalShape.width = 375;
-          finalShape.height = 667; // iPhone frame
+          finalShape.height = 667;
         } else {
           finalShape.width = 100;
           finalShape.height = 100;
@@ -711,7 +782,6 @@ export class CanvasComponent {
     event.preventDefault();
 
     if (event.ctrlKey || event.metaKey) {
-      // Pinch or Ctrl+Wheel = Zoom centered at cursor
       const container = this.canvasContainer()?.nativeElement;
       if (!container) return;
       const rect = container.getBoundingClientRect();
@@ -723,14 +793,12 @@ export class CanvasComponent {
       const factor = event.deltaY < 0 ? 1.08 : 0.92;
       this.state.setZoom(this.state.zoom() * factor, origin);
     } else {
-      // Normal Wheel = Pan Canvas
       this.state.updatePan(-event.deltaX, -event.deltaY);
     }
   }
 
   @HostListener('window:keydown', ['$event'])
   onKeyDown(event: KeyboardEvent) {
-    // Check if an input or textarea is active
     const activeEl = document.activeElement;
     const isTyping =
       activeEl instanceof HTMLInputElement ||
@@ -739,14 +807,12 @@ export class CanvasComponent {
 
     if (isTyping) return;
 
-    // Spacebar for Hand Tool
     if (event.code === 'Space' && !this.isSpacePressed) {
       this.isSpacePressed = true;
       event.preventDefault();
       return;
     }
 
-    // Hotkeys
     const key = event.key.toLowerCase();
     const isCmd = event.metaKey || event.ctrlKey;
 
@@ -784,7 +850,6 @@ export class CanvasComponent {
       return;
     }
 
-    // Nudge with arrow keys
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
       event.preventDefault();
       const step = event.shiftKey ? 10 : 1;
@@ -802,7 +867,6 @@ export class CanvasComponent {
       return;
     }
 
-    // Tools
     if (key === 'v') this.state.setTool('select');
     if (key === 'h') this.state.setTool('hand');
     if (key === 'r') this.state.setTool('rect');
